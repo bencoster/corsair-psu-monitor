@@ -228,8 +228,9 @@ class TransientDetector:
         eff = reading.get("efficiency", 0) or 0
         inp = reading.get("input_power", 0) or 0
 
-        # Only check efficiency when there's meaningful load
-        if inp > 50 and eff > 0 and eff < THRESHOLDS["efficiency_low_pct"]:
+        # Only check efficiency at meaningful load (>25% capacity)
+        # At idle/low loads, PSU efficiency naturally drops — not anomalous
+        if inp > 400 and eff > 0 and eff < THRESHOLDS["efficiency_low_pct"]:
             events.append(TransientEvent(
                 timestamp=reading.get("timestamp", time.time()),
                 type="efficiency",

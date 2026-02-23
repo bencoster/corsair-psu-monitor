@@ -22,9 +22,13 @@ psu_connected = False
 USE_MOCK = False
 
 
+_ema_efficiency = None  # exponential moving average for efficiency smoothing
+EMA_ALPHA = 0.25       # lower = smoother (0.25 ≈ ~2s effective window at 0.5s poll)
+
+
 def collect_loop():
-    """Background thread: read PSU every ~1.5s, store, detect transients, broadcast."""
-    global latest_reading, psu_connected, USE_MOCK
+    """Background thread: read PSU every ~0.5s, store, detect transients, broadcast."""
+    global latest_reading, psu_connected, USE_MOCK, _ema_efficiency
 
     # Try real PSU first
     psu = None
@@ -47,6 +51,15 @@ def collect_loop():
             else:
                 reading = psu.read_all()
                 reading["timestamp"] = time.time()
+                # Smooth efficiency with EMA (register timing skew causes jitter)
+                raw_eff = reading.get("efficiency")
+                if raw_eff is not None:
+                    raw_eff = min(100.0, max(0.0, raw_eff))
+                    if _ema_efficiency is None:
+                        _ema_efficiency = raw_eff
+                    else:
+                        _ema_efficiency = EMA_ALPHA * raw_eff + (1 - EMA_ALPHA) * _ema_efficiency
+                    reading["efficiency"] = round(_ema_efficiency, 1)
 
             latest_reading = reading
 
@@ -94,7 +107,7 @@ def collect_loop():
             })
             _broadcast(error_payload)
 
-        time.sleep(1.5)
+        time.sleep(0.5)
 
 
 # Mock data generator for demo/testing

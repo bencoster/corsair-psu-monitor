@@ -17,9 +17,10 @@ let activeHours   = 0.083;   // 5-minute default
 let historyLoaded = false;
 
 // Chart data buffers (timestamps + values)
-const MAX_LIVE_PTS = 600;
+let maxBufPts      = 600;   // adjusted per time range
+let viewMode       = 'live'; // 'live' = real-time streaming, 'history' = viewing a fixed window
 const powerBuf     = { ts:[], input:[], output:[] };
-const voltTempBuf  = { ts:[], v12:[], vin:[], t1:[], t2:[] };
+const voltTempBuf  = { ts:[], v12:[], t1:[], t2:[] };
 
 // ── Chart.js global defaults ─────────────────────────────────
 Chart.defaults.color           = '#8b95a8';
@@ -108,6 +109,7 @@ const powerChart = new Chart(powerCtx, {
 });
 
 // ── Voltage + Temperature chart ───────────────────────────────
+// Three separate Y axes: 12V rail (tight range), input voltage, temperature
 const vtCtx      = document.getElementById('voltTempChart').getContext('2d');
 const voltTempChart = new Chart(vtCtx, {
     type: 'line',
@@ -117,24 +119,13 @@ const voltTempChart = new Chart(vtCtx, {
                 label: '12V Rail (V)',
                 data: [],
                 borderColor: '#f59e0b',
-                backgroundColor: 'transparent',
+                backgroundColor: 'rgba(245,158,11,0.08)',
+                fill: true,
                 tension: 0.3,
                 borderWidth: 2,
                 pointRadius: 0,
                 pointHoverRadius: 4,
-                yAxisID: 'yVolt',
-            },
-            {
-                label: 'Input Voltage (V)',
-                data: [],
-                borderColor: '#8b5cf6',
-                backgroundColor: 'transparent',
-                tension: 0.3,
-                borderWidth: 1.5,
-                borderDash: [4, 3],
-                pointRadius: 0,
-                pointHoverRadius: 4,
-                yAxisID: 'yVolt',
+                yAxisID: 'y12v',
             },
             {
                 label: 'Temp 1 (°C)',
@@ -170,23 +161,30 @@ const voltTempChart = new Chart(vtCtx, {
                 ...CHART_OPTS.plugins.tooltip,
                 callbacks: {
                     label: ctx => {
-                        const u = ctx.datasetIndex < 2 ? 'V' : '°C';
-                        return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)} ${u}`;
+                        const u = ctx.datasetIndex === 0 ? 'V' : '°C';
+                        const dec = ctx.datasetIndex === 0 ? 3 : 1;
+                        return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(dec)} ${u}`;
                     }
                 }
             }
         },
         scales: {
             ...CHART_OPTS.scales,
-            yVolt: {
+            y12v: {
                 position: 'left',
-                grid: { color: 'rgba(255,255,255,0.04)' },
-                ticks: { callback: v => `${v}V` }
+                title: { display: true, text: '12V Rail', color: '#f59e0b', font: { size: 11 } },
+                suggestedMin: 11.8,
+                suggestedMax: 12.3,
+                grid: { color: 'rgba(245,158,11,0.08)' },
+                ticks: { callback: v => `${v.toFixed(2)}V`, color: '#f59e0b' }
             },
             yTemp: {
                 position: 'right',
+                title: { display: true, text: 'Temperature', color: '#f97316', font: { size: 11 } },
+                suggestedMin: 25,
+                suggestedMax: 65,
                 grid: { drawOnChartArea: false },
-                ticks: { callback: v => `${v}°C` }
+                ticks: { callback: v => `${v}°C`, color: '#f97316' }
             }
         }
     }
@@ -236,7 +234,12 @@ function onReading(d, newEvents) {
     setKPI('kpiEfficiency',   d.efficiency,    1);
     setKPI('kpiInputVoltage', d.input_voltage, 1);
     setKPI('kpiTemp',         Math.max(d.temp1 || 0, d.temp2 || 0), 1);
-    setKPI('kpiFan',          d.fan_rpm,       0);
+    // Fan: show "Silent" for zero-RPM mode (AX1600i runs fanless at low loads)
+    if (d.fan_rpm != null && d.fan_rpm === 0) {
+        setText('kpiFan', 'Silent');
+    } else {
+        setKPI('kpiFan', d.fan_rpm, 0);
+    }
 
     // Progress bars
     setPct('barInputPower',  d.input_power,  PSU_MAX_W);
@@ -277,7 +280,6 @@ function onReading(d, newEvents) {
 
     pushBuf(voltTempBuf.ts,  ts);
     pushBuf(voltTempBuf.v12, d['12v_voltage']);
-    pushBuf(voltTempBuf.vin, d.input_voltage);
     pushBuf(voltTempBuf.t1,  d.temp1);
     pushBuf(voltTempBuf.t2,  d.temp2);
 
@@ -300,7 +302,21 @@ function onError(msg) {
 // ── Chart helpers ─────────────────────────────────────────────
 function pushBuf(arr, val) {
     arr.push(val);
-    if (arr.length > MAX_LIVE_PTS) arr.shift();
+    if (arr.length > maxBufPts) arr.shift();
+}
+
+function trimBufsToWindow() {
+    // In history mode, trim points older than the active time window
+    if (viewMode === 'history' && powerBuf.ts.length > 0) {
+        const cutoff = new Date(Date.now() - activeHours * 3600 * 1000);
+        while (powerBuf.ts.length > 0 && powerBuf.ts[0] < cutoff) {
+            powerBuf.ts.shift(); powerBuf.input.shift(); powerBuf.output.shift();
+        }
+        while (voltTempBuf.ts.length > 0 && voltTempBuf.ts[0] < cutoff) {
+            voltTempBuf.ts.shift(); voltTempBuf.v12.shift();
+            voltTempBuf.t1.shift(); voltTempBuf.t2.shift();
+        }
+    }
 }
 
 function buildXY(tsArr, valArr) {
@@ -308,14 +324,15 @@ function buildXY(tsArr, valArr) {
 }
 
 function refreshCharts() {
+    trimBufsToWindow();
+
     powerChart.data.datasets[0].data = buildXY(powerBuf.ts, powerBuf.input);
     powerChart.data.datasets[1].data = buildXY(powerBuf.ts, powerBuf.output);
-    powerChart.update('none');   // 'none' = no animation
+    powerChart.update('none');
 
     voltTempChart.data.datasets[0].data = buildXY(voltTempBuf.ts, voltTempBuf.v12);
-    voltTempChart.data.datasets[1].data = buildXY(voltTempBuf.ts, voltTempBuf.vin);
-    voltTempChart.data.datasets[2].data = buildXY(voltTempBuf.ts, voltTempBuf.t1);
-    voltTempChart.data.datasets[3].data = buildXY(voltTempBuf.ts, voltTempBuf.t2);
+    voltTempChart.data.datasets[1].data = buildXY(voltTempBuf.ts, voltTempBuf.t1);
+    voltTempChart.data.datasets[2].data = buildXY(voltTempBuf.ts, voltTempBuf.t2);
     voltTempChart.update('none');
 }
 
@@ -327,7 +344,7 @@ async function loadHistory() {
 
         // Clear live buffers and repopulate from history
         [powerBuf.ts, powerBuf.input, powerBuf.output,
-         voltTempBuf.ts, voltTempBuf.v12, voltTempBuf.vin, voltTempBuf.t1, voltTempBuf.t2
+         voltTempBuf.ts, voltTempBuf.v12, voltTempBuf.t1, voltTempBuf.t2
         ].forEach(a => a.length = 0);
 
         rows.forEach(r => {
@@ -337,7 +354,6 @@ async function loadHistory() {
             powerBuf.output.push(r.output_power);
             voltTempBuf.ts.push(ts);
             voltTempBuf.v12.push(r.v12_voltage);
-            voltTempBuf.vin.push(r.input_voltage);
             voltTempBuf.t1.push(r.temp1);
             voltTempBuf.t2.push(r.temp2);
         });
@@ -381,10 +397,26 @@ document.querySelectorAll('.time-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        activeHours = parseFloat(btn.dataset.hours);
-        historyLoaded = false;
-        loadHistory();
-        historyLoaded = true;
+
+        const hours = parseFloat(btn.dataset.hours);
+
+        if (hours === 0) {
+            // Real-time mode: small rolling buffer, no history fetch
+            viewMode = 'live';
+            activeHours = 0.083;
+            maxBufPts = 600;  // ~5 min at 0.5s
+            // Clear buffers and let live data fill in
+            [powerBuf.ts, powerBuf.input, powerBuf.output,
+             voltTempBuf.ts, voltTempBuf.v12, voltTempBuf.t1, voltTempBuf.t2
+            ].forEach(a => a.length = 0);
+        } else {
+            // History mode: load from DB, keep appending live within window
+            viewMode = 'history';
+            activeHours = hours;
+            // Allow more points for longer windows (up to 2000)
+            maxBufPts = Math.min(2000, Math.max(600, Math.round(hours * 3600 / 0.5)));
+            loadHistory();
+        }
     });
 });
 
