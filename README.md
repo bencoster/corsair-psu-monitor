@@ -7,19 +7,25 @@ breakdowns directly from your PSU — no iCUE required.
 
 ## Supported Models
 
-| Model    | PID      | Wattage | Rating        |
-|----------|----------|---------|---------------|
-| AX1600i  | `0x1C11` | 1600W   | 80+ Titanium  |
-| AX1300i  | `0x1C10` | 1300W   | 80+ Titanium  |
-| AX1000i  | `0x1C0F` | 1000W   | 80+ Titanium  |
-| AX850i   | `0x1C0E` | 850W    | 80+ Platinum  |
-| AX860i   | `0x1C0C` | 860W    | 80+ Platinum  |
-| AX760i   | `0x1C0D` | 760W    | 80+ Platinum  |
-| HX1200i  | `0x1C08` | 1200W   | 80+ Platinum  |
-| HX1000i  | `0x1C07` | 1000W   | 80+ Platinum  |
-| HX850i   | `0x1C06` | 850W    | 80+ Platinum  |
-| HX750i   | `0x1C05` | 750W    | 80+ Platinum  |
-| HX650i   | `0x1C04` | 650W    | 80+ Platinum  |
+All models use USB HID via a SiLabs C8051F dongle (VID: `0x1B1C`) for real-time
+PMBus telemetry. Every model is single-rail 12V with DC-to-DC minor rail conversion.
+
+| Model    | PID      | Rating       | Total  | 12V Max   | 12V Power | 5V   | 3.3V | 5V+3.3V |
+|----------|----------|--------------|--------|-----------|-----------|------|------|----------|
+| AX1600i  | `0x1C11` | 80+ Titanium | 1600W  | 133.3A    | 1600W     | 30A  | 30A  | 180W     |
+| AX1300i  | `0x1C10` | 80+ Titanium | 1300W  | 108.3A \* | 1300W     | 25A  | 25A  | 125W     |
+| AX1000i  | `0x1C0F` | 80+ Titanium | 1000W  | 83.3A \*  | 1000W     | 25A  | 25A  | 125W     |
+| AX860i   | `0x1C0C` | 80+ Platinum | 860W   | 71.6A     | 859W      | 25A  | 25A  | 125W     |
+| AX850i   | `0x1C0E` | 80+ Platinum | 850W   | 70.8A \*  | 850W      | 25A  | 25A  | 125W     |
+| AX760i   | `0x1C0D` | 80+ Platinum | 760W   | 63.3A     | 760W      | 25A  | 25A  | 125W     |
+| HX1200i  | `0x1C08` | 80+ Platinum | 1200W  | 100.0A    | 1200W     | 30A  | 30A  | 150W     |
+| HX1000i  | `0x1C07` | 80+ Platinum | 1000W  | 83.3A     | 1000W     | 25A  | 25A  | 150W     |
+| HX850i   | `0x1C06` | 80+ Platinum | 850W   | 70.8A     | 850W      | 25A  | 25A  | 150W     |
+| HX750i   | `0x1C05` | 80+ Platinum | 750W   | 62.5A     | 750W      | 25A  | 25A  | 150W     |
+| HX650i   | `0x1C04` | 80+ Platinum | 650W   | 54.2A     | 650W      | 25A  | 25A  | 150W     |
+
+\* AX1300i, AX1000i, and AX850i PIDs are registered in the Corsair USB protocol but
+were not widely sold at retail. Specs are calculated from rated wattage.
 
 ## Installation
 
