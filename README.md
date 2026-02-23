@@ -192,6 +192,28 @@ execute, read result). See [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the full
 wire-level specification and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for
 detailed architecture diagrams.
 
+## Real-Time Dashboard
+
+A browser-based telemetry dashboard with live charts, transient detection, and historical data.
+
+![PSU Dashboard](docs/dashboard.png)
+
+**Features:**
+- Live power, voltage, temperature, and fan speed monitoring at 2Hz
+- Interactive charts with pan (drag), zoom (scroll wheel), and auto-scroll
+- Time range selection: 1m, 5m, 15m, 1h, 6h, 24h
+- Per-rail DC output breakdown (12V, 5V, 3.3V)
+- Power transient detection (spikes, voltage sags, overcurrent, thermal events)
+- SQLite database for historical data and crash analysis
+- Demo mode with simulated data when no PSU is connected
+
+```bash
+cd dashboard
+pip install -r requirements.txt
+python server.py
+# Open http://localhost:8099
+```
+
 ## Project Structure
 
 ```
@@ -201,12 +223,18 @@ corsair-psu-monitor/
     protocol.py          # Balanced-code encoding, LINEAR11, constants
     psu.py               # CorsairPSU class
     cli.py               # Command-line interface
+  dashboard/
+    server.py            # FastAPI + WebSocket backend
+    database.py          # SQLite telemetry storage
+    transient_detector.py # Power transient detection engine
+    static/              # HTML/CSS/JS frontend
   drivers/
     windows/             # WinUSB .inf driver file
     linux/               # udev rules for non-root access
   docs/
     PROTOCOL.md          # Full protocol specification
     ARCHITECTURE.md      # System architecture diagrams
+    dashboard.png        # Dashboard screenshot
   tests/                 # Unit tests (no hardware needed)
   examples/              # Usage examples
 ```

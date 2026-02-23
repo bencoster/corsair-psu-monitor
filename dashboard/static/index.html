@@ -6,6 +6,8 @@
     <title>Corsair AX1600i — PSU Telemetry</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
@@ -106,11 +108,12 @@
                 <div class="panel-header">
                     <h2>Power Draw</h2>
                     <div class="time-controls">
-                        <button class="time-btn active" data-hours="0">Real-time</button>
-                        <button class="time-btn" data-hours="0.25">15m</button>
-                        <button class="time-btn" data-hours="1">1h</button>
-                        <button class="time-btn" data-hours="6">6h</button>
-                        <button class="time-btn" data-hours="24">24h</button>
+                        <button class="time-btn active" data-minutes="1">1m</button>
+                        <button class="time-btn" data-minutes="5">5m</button>
+                        <button class="time-btn" data-minutes="15">15m</button>
+                        <button class="time-btn" data-minutes="60">1h</button>
+                        <button class="time-btn" data-minutes="360">6h</button>
+                        <button class="time-btn" data-minutes="1440">24h</button>
                     </div>
                 </div>
                 <div class="chart-container"><canvas id="powerChart"></canvas></div>

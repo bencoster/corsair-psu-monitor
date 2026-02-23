@@ -1,9 +1,10 @@
 'use strict';
 // ============================================================
 //  PSU Telemetry Dashboard — app.js
+//  Pan (drag), zoom (wheel), auto-scrolling time window
 // ============================================================
 
-const API  = '';          // same origin
+const API  = '';
 const WS_URL = `ws://${location.host}/ws`;
 const PSU_MAX_W = 1600;
 
@@ -13,12 +14,14 @@ let wsRetryTimer  = null;
 let reconnectDelay = 2000;
 let sessionStart  = Date.now();
 let events        = [];
-let activeHours   = 0.083;   // 5-minute default
 let historyLoaded = false;
 
-// Chart data buffers (timestamps + values)
-let maxBufPts      = 600;   // adjusted per time range
-let viewMode       = 'live'; // 'live' = real-time streaming, 'history' = viewing a fixed window
+// Time window: how many minutes of data to show in the visible window
+let windowMinutes = 1;        // default: 1 minute view
+let autoScroll    = true;     // true = window follows live data; false = user is panning
+const MAX_BUF     = 200000;   // keep up to ~28 hours of data at 0.5s intervals
+
+// Chart data buffers — always growing, never trimmed (except at MAX_BUF)
 const powerBuf     = { ts:[], input:[], output:[] };
 const voltTempBuf  = { ts:[], v12:[], t1:[], t2:[] };
 
@@ -27,7 +30,25 @@ Chart.defaults.color           = '#8b95a8';
 Chart.defaults.borderColor     = '#1e2d40';
 Chart.defaults.font.family     = "'Inter', sans-serif";
 Chart.defaults.font.size       = 11;
-Chart.defaults.animation       = { duration: 0 };  // disable for performance
+Chart.defaults.animation       = { duration: 0 };
+
+// Zoom/pan plugin config shared by both charts
+const ZOOM_PAN_OPTS = {
+    pan: {
+        enabled: true,
+        mode: 'x',
+        onPanStart: () => { autoScroll = false; },
+    },
+    zoom: {
+        wheel: { enabled: true, modifierKey: null },
+        pinch: { enabled: true },
+        mode: 'x',
+        onZoomStart: () => { autoScroll = false; },
+    },
+    limits: {
+        x: { minRange: 10 * 1000 },  // minimum 10 seconds visible
+    }
+};
 
 const CHART_OPTS = {
     responsive: true,
@@ -43,15 +64,15 @@ const CHART_OPTS = {
             borderColor: '#2a3a4e',
             borderWidth: 1,
             padding: 10,
-            callbacks: {}
-        }
+        },
+        zoom: ZOOM_PAN_OPTS,
     },
     scales: {
         x: {
             type: 'time',
             time: { tooltipFormat: 'HH:mm:ss', displayFormats: { second:'HH:mm:ss', minute:'HH:mm', hour:'HH:mm' } },
             grid: { color: 'rgba(255,255,255,0.04)' },
-            ticks: { maxRotation: 0, autoSkipPadding: 20 }
+            ticks: { maxRotation: 0, autoSkipPadding: 20 },
         }
     }
 };
@@ -95,7 +116,7 @@ const powerChart = new Chart(powerCtx, {
                 callbacks: {
                     label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} W`
                 }
-            }
+            },
         },
         scales: {
             ...CHART_OPTS.scales,
@@ -108,8 +129,7 @@ const powerChart = new Chart(powerCtx, {
     }
 });
 
-// ── Voltage + Temperature chart ───────────────────────────────
-// Three separate Y axes: 12V rail (tight range), input voltage, temperature
+// ── 12V Rail + Temperature chart ──────────────────────────────
 const vtCtx      = document.getElementById('voltTempChart').getContext('2d');
 const voltTempChart = new Chart(vtCtx, {
     type: 'line',
@@ -166,7 +186,7 @@ const voltTempChart = new Chart(vtCtx, {
                         return `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(dec)} ${u}`;
                     }
                 }
-            }
+            },
         },
         scales: {
             ...CHART_OPTS.scales,
@@ -198,11 +218,9 @@ function connect() {
         reconnectDelay = 2000;
         clearTimeout(wsRetryTimer);
         setConnectionBadge('connected');
-        // Ping keepalive every 20s
         ws._pingTimer = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type:'ping' }));
         }, 20000);
-        // Load history once
         if (!historyLoaded) { loadHistory(); historyLoaded = true; }
     };
 
@@ -234,7 +252,6 @@ function onReading(d, newEvents) {
     setKPI('kpiEfficiency',   d.efficiency,    1);
     setKPI('kpiInputVoltage', d.input_voltage, 1);
     setKPI('kpiTemp',         Math.max(d.temp1 || 0, d.temp2 || 0), 1);
-    // Fan: show "Silent" for zero-RPM mode (AX1600i runs fanless at low loads)
     if (d.fan_rpm != null && d.fan_rpm === 0) {
         setText('kpiFan', 'Silent');
     } else {
@@ -248,7 +265,7 @@ function onReading(d, newEvents) {
 
     // ── Rails ─────────────────────────────────────────────────
     setText('rail12vVoltage', fmt(d['12v_voltage'], 2) + ' V');
-    setKPIColor('rail12vVoltage', d['12v_voltage'], 11.8, 12.3, 'good');
+    setKPIColor('rail12vVoltage', d['12v_voltage'], 11.8, 12.3);
     setText('rail12vCurrent', fmt(d['12v_current'], 2));
     setText('rail12vPower',   fmt(d['12v_power'],   1));
     setPct('bar12v', d['12v_power'], PSU_MAX_W * 0.85);
@@ -268,12 +285,10 @@ function onReading(d, newEvents) {
     setText('temp1Val',     fmt(d.temp1, 1));
     setText('temp2Val',     fmt(d.temp2, 1));
     setText('railSum',      fmt(d.rail_power_sum, 1));
-
-    // Temp colour
     setTempColor('temp1Val', d.temp1);
     setTempColor('temp2Val', d.temp2);
 
-    // ── Live chart buffers ─────────────────────────────────────
+    // ── Append to buffers (always, regardless of view) ────────
     pushBuf(powerBuf.ts,     ts);
     pushBuf(powerBuf.input,  d.input_power);
     pushBuf(powerBuf.output, d.output_power);
@@ -291,7 +306,6 @@ function onReading(d, newEvents) {
         updateEventCount();
     }
 
-    // ── Uptime ────────────────────────────────────────────────
     updateUptime();
 }
 
@@ -302,21 +316,7 @@ function onError(msg) {
 // ── Chart helpers ─────────────────────────────────────────────
 function pushBuf(arr, val) {
     arr.push(val);
-    if (arr.length > maxBufPts) arr.shift();
-}
-
-function trimBufsToWindow() {
-    // In history mode, trim points older than the active time window
-    if (viewMode === 'history' && powerBuf.ts.length > 0) {
-        const cutoff = new Date(Date.now() - activeHours * 3600 * 1000);
-        while (powerBuf.ts.length > 0 && powerBuf.ts[0] < cutoff) {
-            powerBuf.ts.shift(); powerBuf.input.shift(); powerBuf.output.shift();
-        }
-        while (voltTempBuf.ts.length > 0 && voltTempBuf.ts[0] < cutoff) {
-            voltTempBuf.ts.shift(); voltTempBuf.v12.shift();
-            voltTempBuf.t1.shift(); voltTempBuf.t2.shift();
-        }
-    }
+    if (arr.length > MAX_BUF) arr.shift();
 }
 
 function buildXY(tsArr, valArr) {
@@ -324,55 +324,113 @@ function buildXY(tsArr, valArr) {
 }
 
 function refreshCharts() {
-    trimBufsToWindow();
-
+    // Update data
     powerChart.data.datasets[0].data = buildXY(powerBuf.ts, powerBuf.input);
     powerChart.data.datasets[1].data = buildXY(powerBuf.ts, powerBuf.output);
-    powerChart.update('none');
 
     voltTempChart.data.datasets[0].data = buildXY(voltTempBuf.ts, voltTempBuf.v12);
     voltTempChart.data.datasets[1].data = buildXY(voltTempBuf.ts, voltTempBuf.t1);
     voltTempChart.data.datasets[2].data = buildXY(voltTempBuf.ts, voltTempBuf.t2);
+
+    // Auto-scroll: move the visible window to follow the latest data
+    if (autoScroll) {
+        const now = Date.now();
+        const windowMs = windowMinutes * 60 * 1000;
+        const xMin = new Date(now - windowMs);
+        const xMax = new Date(now);
+
+        powerChart.options.scales.x.min = xMin;
+        powerChart.options.scales.x.max = xMax;
+        voltTempChart.options.scales.x.min = xMin;
+        voltTempChart.options.scales.x.max = xMax;
+    }
+    // If !autoScroll, the user has panned/zoomed — leave the axes alone
+
+    powerChart.update('none');
     voltTempChart.update('none');
 }
 
-// ── History load (on connect and time-range change) ───────────
+// ── History load ──────────────────────────────────────────────
 async function loadHistory() {
+    // Load enough data to fill the buffer for panning back
+    const hours = Math.max(1, windowMinutes / 60);
     try {
-        const res  = await fetch(`${API}/api/history?hours=${activeHours}&points=600`);
+        const res  = await fetch(`${API}/api/history?hours=${hours}&points=2000`);
         const rows = await res.json();
 
-        // Clear live buffers and repopulate from history
-        [powerBuf.ts, powerBuf.input, powerBuf.output,
-         voltTempBuf.ts, voltTempBuf.v12, voltTempBuf.t1, voltTempBuf.t2
-        ].forEach(a => a.length = 0);
+        // Prepend historical data (oldest first)
+        if (rows.length > 0) {
+            const histPower = { ts:[], input:[], output:[] };
+            const histVT    = { ts:[], v12:[], t1:[], t2:[] };
 
-        rows.forEach(r => {
-            const ts = new Date(r.timestamp * 1000);
-            powerBuf.ts.push(ts);
-            powerBuf.input.push(r.input_power);
-            powerBuf.output.push(r.output_power);
-            voltTempBuf.ts.push(ts);
-            voltTempBuf.v12.push(r.v12_voltage);
-            voltTempBuf.t1.push(r.temp1);
-            voltTempBuf.t2.push(r.temp2);
-        });
+            rows.forEach(r => {
+                const ts = new Date(r.timestamp * 1000);
+                histPower.ts.push(ts);
+                histPower.input.push(r.input_power);
+                histPower.output.push(r.output_power);
+                histVT.ts.push(ts);
+                histVT.v12.push(r.v12_voltage);
+                histVT.t1.push(r.temp1);
+                histVT.t2.push(r.temp2);
+            });
+
+            // Merge: history first, then any live data already collected
+            powerBuf.ts.unshift(...histPower.ts);
+            powerBuf.input.unshift(...histPower.input);
+            powerBuf.output.unshift(...histPower.output);
+            voltTempBuf.ts.unshift(...histVT.ts);
+            voltTempBuf.v12.unshift(...histVT.v12);
+            voltTempBuf.t1.unshift(...histVT.t1);
+            voltTempBuf.t2.unshift(...histVT.t2);
+        }
 
         refreshCharts();
     } catch (e) {
         console.warn('History fetch failed:', e);
     }
 
-    // Also load transient history
+    // Load transient history
     try {
-        const res2 = await fetch(`${API}/api/transients?hours=${activeHours}`);
+        const res2 = await fetch(`${API}/api/transients?hours=${hours}`);
         const ev   = await res2.json();
         ev.slice(-50).reverse().forEach(addEvent);
         updateEventCount();
     } catch (e) {}
 
-    // Load stats
     loadStats();
+}
+
+// Load more history when user pans into the past
+async function loadMoreHistory(olderThanTs) {
+    const sinceHours = (Date.now() - olderThanTs) / 3600000 + 1; // 1 hour before oldest
+    try {
+        const res = await fetch(`${API}/api/history?hours=${sinceHours}&points=2000`);
+        const rows = await res.json();
+        if (rows.length === 0) return;
+
+        const oldestExisting = powerBuf.ts.length > 0 ? powerBuf.ts[0].getTime() : Infinity;
+        const newRows = rows.filter(r => r.timestamp * 1000 < oldestExisting);
+        if (newRows.length === 0) return;
+
+        const prepend = { ts:[], input:[], output:[], v12:[], t1:[], t2:[] };
+        newRows.forEach(r => {
+            const ts = new Date(r.timestamp * 1000);
+            prepend.ts.push(ts);
+            prepend.input.push(r.input_power);
+            prepend.output.push(r.output_power);
+            prepend.v12.push(r.v12_voltage);
+            prepend.t1.push(r.temp1);
+            prepend.t2.push(r.temp2);
+        });
+
+        powerBuf.ts.unshift(...prepend.ts);
+        powerBuf.input.unshift(...prepend.input);
+        powerBuf.output.unshift(...prepend.output);
+        voltTempBuf.ts.unshift(...prepend.ts);
+        voltTempBuf.v12.unshift(...prepend.v12);
+        voltTempBuf.t1.unshift(...prepend.t1);
+        voltTempBuf.t2.unshift(...prepend.t2);
+    } catch (e) {}
 }
 
 async function loadStats() {
@@ -398,26 +456,61 @@ document.querySelectorAll('.time-btn').forEach(btn => {
         document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
 
-        const hours = parseFloat(btn.dataset.hours);
+        const minutes = parseInt(btn.dataset.minutes, 10);
+        windowMinutes = minutes;
+        autoScroll = true;  // resume auto-scroll when clicking a time button
 
-        if (hours === 0) {
-            // Real-time mode: small rolling buffer, no history fetch
-            viewMode = 'live';
-            activeHours = 0.083;
-            maxBufPts = 600;  // ~5 min at 0.5s
-            // Clear buffers and let live data fill in
-            [powerBuf.ts, powerBuf.input, powerBuf.output,
-             voltTempBuf.ts, voltTempBuf.v12, voltTempBuf.t1, voltTempBuf.t2
-            ].forEach(a => a.length = 0);
-        } else {
-            // History mode: load from DB, keep appending live within window
-            viewMode = 'history';
-            activeHours = hours;
-            // Allow more points for longer windows (up to 2000)
-            maxBufPts = Math.min(2000, Math.max(600, Math.round(hours * 3600 / 0.5)));
-            loadHistory();
+        // Reset zoom state on both charts
+        powerChart.resetZoom();
+        voltTempChart.resetZoom();
+
+        // For longer time ranges, load history from DB
+        if (minutes > 5) {
+            loadHistoryForRange(minutes);
         }
+
+        refreshCharts();
     });
+});
+
+async function loadHistoryForRange(minutes) {
+    const hours = minutes / 60;
+    try {
+        const res = await fetch(`${API}/api/history?hours=${hours}&points=2000`);
+        const rows = await res.json();
+
+        // Clear and reload
+        [powerBuf.ts, powerBuf.input, powerBuf.output,
+         voltTempBuf.ts, voltTempBuf.v12, voltTempBuf.t1, voltTempBuf.t2
+        ].forEach(a => a.length = 0);
+
+        rows.forEach(r => {
+            const ts = new Date(r.timestamp * 1000);
+            powerBuf.ts.push(ts);
+            powerBuf.input.push(r.input_power);
+            powerBuf.output.push(r.output_power);
+            voltTempBuf.ts.push(ts);
+            voltTempBuf.v12.push(r.v12_voltage);
+            voltTempBuf.t1.push(r.temp1);
+            voltTempBuf.t2.push(r.temp2);
+        });
+
+        refreshCharts();
+    } catch (e) {}
+}
+
+// Double-click to resume auto-scroll (reset view to live)
+document.getElementById('powerChart').addEventListener('dblclick', () => {
+    autoScroll = true;
+    powerChart.resetZoom();
+    voltTempChart.resetZoom();
+    refreshCharts();
+});
+document.getElementById('voltTempChart').addEventListener('dblclick', () => {
+    autoScroll = true;
+    powerChart.resetZoom();
+    voltTempChart.resetZoom();
+    refreshCharts();
 });
 
 // ── Transient events ──────────────────────────────────────────
@@ -443,10 +536,7 @@ function addEvent(ev) {
     `;
     list.insertBefore(item, list.firstChild);
 
-    // Keep list to 100 visible items
     while (list.children.length > 100) list.removeChild(list.lastChild);
-
-    // Flash header border on critical
     if (ev.severity === 'critical') flashAlert();
 }
 
@@ -474,7 +564,6 @@ function setConnectionBadge(state) {
     el.className = `badge badge-${state}`;
     el.textContent = state === 'connected' ? 'Live' : state === 'connecting' ? 'Connecting...' : 'Disconnected';
 
-    // Check demo mode from server status
     fetch(`${API}/api/status`).then(r => r.json()).then(s => {
         const demo = document.getElementById('demoBadge');
         demo.style.display = s.demo_mode ? 'inline-block' : 'none';
@@ -509,10 +598,9 @@ function setPct(id, val, max) {
     if (el) el.style.width = `${Math.min(100, Math.max(0, (val / max) * 100)).toFixed(1)}%`;
 }
 
-function setKPIColor(id, val, low, high, direction) {
+function setKPIColor(id, val, low, high) {
     const el = document.getElementById(id);
     if (!el) return;
-    // For voltage: ok is between low and high
     if (val < low)        el.style.color = 'var(--accent-red)';
     else if (val > high)  el.style.color = 'var(--accent-orange)';
     else                  el.style.color = '';
