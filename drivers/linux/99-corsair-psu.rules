@@ -1,0 +1,35 @@
+# udev rules for Corsair AXi/HXi PSU USB access
+#
+# Allows non-root users in the "plugdev" group to access Corsair PSU dongles.
+#
+# Installation:
+#   sudo cp 99-corsair-psu.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+#
+# Then add your user to the plugdev group:
+#   sudo usermod -aG plugdev $USER
+#   (log out and back in for the group change to take effect)
+
+# Corsair AX1600i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c11", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair AX1300i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c10", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair AX1000i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c0f", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair AX850i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c0e", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair AX860i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c0c", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair AX760i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c0d", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair HX1200i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c08", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair HX1000i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c07", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair HX850i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c06", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair HX750i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c05", MODE="0664", GROUP="plugdev", TAG+="uaccess"
+# Corsair HX650i
+SUBSYSTEM=="usb", ATTR{idVendor}=="1b1c", ATTR{idProduct}=="1c04", MODE="0664", GROUP="plugdev", TAG+="uaccess"

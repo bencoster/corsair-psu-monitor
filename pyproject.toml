@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "corsair-psu-monitor"
+version = "0.1.0"
+description = "Read real-time telemetry from Corsair AXi/HXi PSUs (power, voltage, current, temperature, fan speed) over USB"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.8"
+authors = [
+    { name = "Ben Coster" },
+]
+keywords = ["corsair", "psu", "power-supply", "usb", "pmbus", "telemetry", "monitoring"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Hardware",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "pyusb>=1.2.0",
+    "libusb-package>=1.0.26.1",
+]
+
+[project.optional-dependencies]
+cli = ["click>=8.0"]
+dev = ["pytest>=7.0", "pytest-mock>=3.0"]
+
+[project.scripts]
+corsair-psu-monitor = "corsair_psu_monitor.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/bencoster/corsair-psu-monitor"
+Repository = "https://github.com/bencoster/corsair-psu-monitor"
+Issues = "https://github.com/bencoster/corsair-psu-monitor/issues"
+Documentation = "https://github.com/bencoster/corsair-psu-monitor/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

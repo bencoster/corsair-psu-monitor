@@ -1,0 +1,97 @@
+; Corsair AXi/HXi PSU WinUSB Driver
+;
+; Installs the WinUSB driver for Corsair digital power supplies.
+; This replaces the Corsair SiUSBXpress driver with WinUSB,
+; enabling direct USB access from Python via pyusb/libusb.
+;
+; INSTALLATION:
+;   1. Open Device Manager
+;   2. Find "USB API" under "Universal Serial Bus devices" (or SiUSBXpress)
+;   3. Right-click -> Update driver -> Browse my computer -> Let me pick
+;   4. Click "Have Disk" -> Browse to this .inf file
+;   5. Select "Corsair PSU (WinUSB)" and install
+;
+;   Alternative: Use Zadig (https://zadig.akeo.ie/) for easier installation
+;
+; WARNING: This will prevent Corsair iCUE from communicating with the PSU.
+;          iCUE uses the SiUSBXpress driver. You cannot use both simultaneously.
+;
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = USBDevice
+ClassGUID   = {88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider    = %ManufacturerName%
+CatalogFile = corsair-psu-winusb.cat
+DriverVer   = 02/24/2026,0.1.0.0
+PnpLockdown = 1
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64,NTx86,NTarm64
+
+[Standard.NTamd64]
+%DeviceName_AX1600i% = USB_Install, USB\VID_1B1C&PID_1C11
+%DeviceName_AX1300i% = USB_Install, USB\VID_1B1C&PID_1C10
+%DeviceName_AX1000i% = USB_Install, USB\VID_1B1C&PID_1C0F
+%DeviceName_AX850i%  = USB_Install, USB\VID_1B1C&PID_1C0E
+%DeviceName_AX860i%  = USB_Install, USB\VID_1B1C&PID_1C0C
+%DeviceName_AX760i%  = USB_Install, USB\VID_1B1C&PID_1C0D
+%DeviceName_HX1200i% = USB_Install, USB\VID_1B1C&PID_1C08
+%DeviceName_HX1000i% = USB_Install, USB\VID_1B1C&PID_1C07
+%DeviceName_HX850i%  = USB_Install, USB\VID_1B1C&PID_1C06
+%DeviceName_HX750i%  = USB_Install, USB\VID_1B1C&PID_1C05
+%DeviceName_HX650i%  = USB_Install, USB\VID_1B1C&PID_1C04
+
+[Standard.NTx86]
+%DeviceName_AX1600i% = USB_Install, USB\VID_1B1C&PID_1C11
+%DeviceName_AX1300i% = USB_Install, USB\VID_1B1C&PID_1C10
+%DeviceName_AX1000i% = USB_Install, USB\VID_1B1C&PID_1C0F
+%DeviceName_AX850i%  = USB_Install, USB\VID_1B1C&PID_1C0E
+%DeviceName_AX860i%  = USB_Install, USB\VID_1B1C&PID_1C0C
+%DeviceName_AX760i%  = USB_Install, USB\VID_1B1C&PID_1C0D
+%DeviceName_HX1200i% = USB_Install, USB\VID_1B1C&PID_1C08
+%DeviceName_HX1000i% = USB_Install, USB\VID_1B1C&PID_1C07
+%DeviceName_HX850i%  = USB_Install, USB\VID_1B1C&PID_1C06
+%DeviceName_HX750i%  = USB_Install, USB\VID_1B1C&PID_1C05
+%DeviceName_HX650i%  = USB_Install, USB\VID_1B1C&PID_1C04
+
+[Standard.NTarm64]
+%DeviceName_AX1600i% = USB_Install, USB\VID_1B1C&PID_1C11
+%DeviceName_AX1300i% = USB_Install, USB\VID_1B1C&PID_1C10
+%DeviceName_AX1000i% = USB_Install, USB\VID_1B1C&PID_1C0F
+%DeviceName_AX850i%  = USB_Install, USB\VID_1B1C&PID_1C0E
+%DeviceName_AX860i%  = USB_Install, USB\VID_1B1C&PID_1C0C
+%DeviceName_AX760i%  = USB_Install, USB\VID_1B1C&PID_1C0D
+%DeviceName_HX1200i% = USB_Install, USB\VID_1B1C&PID_1C08
+%DeviceName_HX1000i% = USB_Install, USB\VID_1B1C&PID_1C07
+%DeviceName_HX850i%  = USB_Install, USB\VID_1B1C&PID_1C06
+%DeviceName_HX750i%  = USB_Install, USB\VID_1B1C&PID_1C05
+%DeviceName_HX650i%  = USB_Install, USB\VID_1B1C&PID_1C04
+
+[USB_Install]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[USB_Install.Services]
+Include = winusb.inf
+Needs   = WINUSB.NT.Services
+
+[USB_Install.HW]
+AddReg = Dev_AddReg
+
+[Dev_AddReg]
+HKR,,DeviceInterfaceGUIDs,0x10000,"{3c5e1462-5695-4e18-876b-f3f3d08aaf18}"
+
+[Strings]
+ManufacturerName   = "Corsair"
+DeviceName_AX1600i = "Corsair AX1600i PSU (WinUSB)"
+DeviceName_AX1300i = "Corsair AX1300i PSU (WinUSB)"
+DeviceName_AX1000i = "Corsair AX1000i PSU (WinUSB)"
+DeviceName_AX850i  = "Corsair AX850i PSU (WinUSB)"
+DeviceName_AX860i  = "Corsair AX860i PSU (WinUSB)"
+DeviceName_AX760i  = "Corsair AX760i PSU (WinUSB)"
+DeviceName_HX1200i = "Corsair HX1200i PSU (WinUSB)"
+DeviceName_HX1000i = "Corsair HX1000i PSU (WinUSB)"
+DeviceName_HX850i  = "Corsair HX850i PSU (WinUSB)"
+DeviceName_HX750i  = "Corsair HX750i PSU (WinUSB)"
+DeviceName_HX650i  = "Corsair HX650i PSU (WinUSB)"
