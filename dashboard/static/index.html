@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Corsair AX1600i — PSU Telemetry</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                </svg>
+            </div>
+            <div>
+                <h1>Corsair AX1600i</h1>
+                <span class="subtitle">PSU Telemetry Monitor</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <span id="connectionBadge" class="badge badge-connecting">Connecting...</span>
+            <span id="demoBadge" class="badge badge-demo" style="display:none">DEMO</span>
+            <span id="uptimeClock" class="uptime">--:--:--</span>
+        </div>
+    </header>
+
+    <main class="dashboard">
+        <!-- Top KPI Cards Row -->
+        <section class="kpi-row">
+            <div class="kpi-card">
+                <div class="kpi-icon power-in">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                </div>
+                <div class="kpi-content">
+                    <span class="kpi-label">Input Power</span>
+                    <span class="kpi-value" id="kpiInputPower">--</span>
+                    <span class="kpi-unit">W</span>
+                </div>
+                <div class="kpi-bar-wrap"><div class="kpi-bar kpi-bar-power" id="barInputPower"></div></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon power-out">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                </div>
+                <div class="kpi-content">
+                    <span class="kpi-label">Output Power</span>
+                    <span class="kpi-value" id="kpiOutputPower">--</span>
+                    <span class="kpi-unit">W</span>
+                </div>
+                <div class="kpi-bar-wrap"><div class="kpi-bar kpi-bar-output" id="barOutputPower"></div></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon efficiency">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                </div>
+                <div class="kpi-content">
+                    <span class="kpi-label">Efficiency</span>
+                    <span class="kpi-value" id="kpiEfficiency">--</span>
+                    <span class="kpi-unit">%</span>
+                </div>
+                <div class="kpi-bar-wrap"><div class="kpi-bar kpi-bar-eff" id="barEfficiency"></div></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon voltage">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h4m12 0h4M12 2v4m0 12v4"/><circle cx="12" cy="12" r="4"/></svg>
+                </div>
+                <div class="kpi-content">
+                    <span class="kpi-label">Input Voltage</span>
+                    <span class="kpi-value" id="kpiInputVoltage">--</span>
+                    <span class="kpi-unit">V</span>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon temp">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>
+                </div>
+                <div class="kpi-content">
+                    <span class="kpi-label">Temperature</span>
+                    <span class="kpi-value" id="kpiTemp">--</span>
+                    <span class="kpi-unit">°C</span>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon fan">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 12c-1.5-3-4-5.5-7-5s-3 5 1 7c-3 1.5-5.5 4-5 7s5 3 7-1c1.5 3 4 5.5 7 5s3-5-1-7c3-1.5 5.5-4 5-7s-5-3-7 1z"/><circle cx="12" cy="12" r="1.5"/></svg>
+                </div>
+                <div class="kpi-content">
+                    <span class="kpi-label">Fan Speed</span>
+                    <span class="kpi-value" id="kpiFan">--</span>
+                    <span class="kpi-unit">RPM</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Grid: Charts + Rails -->
+        <section class="main-grid">
+            <!-- Power Chart -->
+            <div class="panel chart-panel power-chart-panel">
+                <div class="panel-header">
+                    <h2>Power Draw</h2>
+                    <div class="time-controls">
+                        <button class="time-btn active" data-hours="0.083">5m</button>
+                        <button class="time-btn" data-hours="0.25">15m</button>
+                        <button class="time-btn" data-hours="1">1h</button>
+                        <button class="time-btn" data-hours="6">6h</button>
+                        <button class="time-btn" data-hours="24">24h</button>
+                    </div>
+                </div>
+                <div class="chart-container"><canvas id="powerChart"></canvas></div>
+            </div>
+
+            <!-- Voltage Chart -->
+            <div class="panel chart-panel voltage-chart-panel">
+                <div class="panel-header">
+                    <h2>Voltage & Temperature</h2>
+                </div>
+                <div class="chart-container"><canvas id="voltTempChart"></canvas></div>
+            </div>
+
+            <!-- Rails Panel -->
+            <div class="panel rails-panel">
+                <div class="panel-header"><h2>DC Rails</h2></div>
+                <div class="rails-grid">
+                    <div class="rail-card rail-12v">
+                        <div class="rail-header">
+                            <span class="rail-name">12V Rail</span>
+                            <span class="rail-voltage" id="rail12vVoltage">--</span>
+                        </div>
+                        <div class="rail-stats">
+                            <div class="rail-stat">
+                                <span class="rail-stat-label">Current</span>
+                                <span class="rail-stat-value" id="rail12vCurrent">--</span>
+                                <span class="rail-stat-unit">A</span>
+                            </div>
+                            <div class="rail-stat">
+                                <span class="rail-stat-label">Power</span>
+                                <span class="rail-stat-value" id="rail12vPower">--</span>
+                                <span class="rail-stat-unit">W</span>
+                            </div>
+                        </div>
+                        <div class="rail-bar-wrap"><div class="rail-bar" id="bar12v"></div></div>
+                    </div>
+                    <div class="rail-card rail-5v">
+                        <div class="rail-header">
+                            <span class="rail-name">5V Rail</span>
+                            <span class="rail-voltage" id="rail5vVoltage">--</span>
+                        </div>
+                        <div class="rail-stats">
+                            <div class="rail-stat">
+                                <span class="rail-stat-label">Current</span>
+                                <span class="rail-stat-value" id="rail5vCurrent">--</span>
+                                <span class="rail-stat-unit">A</span>
+                            </div>
+                            <div class="rail-stat">
+                                <span class="rail-stat-label">Power</span>
+                                <span class="rail-stat-value" id="rail5vPower">--</span>
+                                <span class="rail-stat-unit">W</span>
+                            </div>
+                        </div>
+                        <div class="rail-bar-wrap"><div class="rail-bar" id="bar5v"></div></div>
+                    </div>
+                    <div class="rail-card rail-3v3">
+                        <div class="rail-header">
+                            <span class="rail-name">3.3V Rail</span>
+                            <span class="rail-voltage" id="rail3v3Voltage">--</span>
+                        </div>
+                        <div class="rail-stats">
+                            <div class="rail-stat">
+                                <span class="rail-stat-label">Current</span>
+                                <span class="rail-stat-value" id="rail3v3Current">--</span>
+                                <span class="rail-stat-unit">A</span>
+                            </div>
+                            <div class="rail-stat">
+                                <span class="rail-stat-label">Power</span>
+                                <span class="rail-stat-value" id="rail3v3Power">--</span>
+                                <span class="rail-stat-unit">W</span>
+                            </div>
+                        </div>
+                        <div class="rail-bar-wrap"><div class="rail-bar" id="bar3v3"></div></div>
+                    </div>
+                </div>
+                <!-- Input Stats -->
+                <div class="input-stats">
+                    <div class="input-stat">
+                        <span class="input-stat-label">Input Current</span>
+                        <span class="input-stat-value" id="inputCurrent">--</span>
+                        <span class="input-stat-unit">A</span>
+                    </div>
+                    <div class="input-stat">
+                        <span class="input-stat-label">Temp 1</span>
+                        <span class="input-stat-value" id="temp1Val">--</span>
+                        <span class="input-stat-unit">°C</span>
+                    </div>
+                    <div class="input-stat">
+                        <span class="input-stat-label">Temp 2</span>
+                        <span class="input-stat-value" id="temp2Val">--</span>
+                        <span class="input-stat-unit">°C</span>
+                    </div>
+                    <div class="input-stat">
+                        <span class="input-stat-label">Rail Sum</span>
+                        <span class="input-stat-value" id="railSum">--</span>
+                        <span class="input-stat-unit">W</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Transient Events Log -->
+        <section class="panel events-panel">
+            <div class="panel-header">
+                <h2>Transient Events</h2>
+                <div class="event-stats">
+                    <span id="eventCount" class="event-count">0 events</span>
+                    <button id="clearEvents" class="btn-clear">Clear</button>
+                </div>
+            </div>
+            <div class="events-list" id="eventsList">
+                <div class="event-empty">No transient events detected. Monitoring...</div>
+            </div>
+        </section>
+
+        <!-- Session Stats -->
+        <section class="panel stats-panel">
+            <div class="panel-header"><h2>Session Statistics</h2></div>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-item"><span class="stat-label">Peak Input</span><span class="stat-value" id="statPeakInput">--</span></div>
+                <div class="stat-item"><span class="stat-label">Peak Output</span><span class="stat-value" id="statPeakOutput">--</span></div>
+                <div class="stat-item"><span class="stat-label">Avg Efficiency</span><span class="stat-value" id="statAvgEff">--</span></div>
+                <div class="stat-item"><span class="stat-label">Max Temp</span><span class="stat-value" id="statMaxTemp">--</span></div>
+                <div class="stat-item"><span class="stat-label">Voltage Range</span><span class="stat-value" id="statVoltRange">--</span></div>
+                <div class="stat-item"><span class="stat-label">Total Readings</span><span class="stat-value" id="statReadings">--</span></div>
+                <div class="stat-item"><span class="stat-label">Transients</span><span class="stat-value" id="statTransients">--</span></div>
+                <div class="stat-item"><span class="stat-label">Max 12V Current</span><span class="stat-value" id="statMax12vA">--</span></div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

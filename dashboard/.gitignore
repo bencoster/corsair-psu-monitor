@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+psu_telemetry.db
+.claude/
