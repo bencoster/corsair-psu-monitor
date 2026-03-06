@@ -132,6 +132,65 @@ def cmd_json(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_install_driver(args: argparse.Namespace) -> None:
+    """Check and install WinUSB driver for Corsair PSU."""
+    import platform
+
+    if platform.system() != "Windows":
+        print("Driver installation is only needed on Windows.")
+        print("Linux/macOS use built-in USB drivers.")
+        return
+
+    from .driver_installer import (
+        check_driver_status, install_winusb_driver,
+        DriverStatus, InstallResult, _is_admin, _request_elevation,
+    )
+
+    # Check current status
+    status = check_driver_status()
+    print(f"Driver status: {status.message}")
+
+    if args.check_only:
+        if status.needs_install:
+            print("\nTo install: corsair-psu-monitor install-driver --elevate")
+            sys.exit(1)
+        return
+
+    if status.status == DriverStatus.OK and not args.force:
+        print("No action needed.")
+        return
+
+    if status.status == DriverStatus.NO_DEVICE:
+        print("\nMake sure your Corsair PSU USB cable is connected.")
+        sys.exit(1)
+
+    # Need admin for installation
+    if not _is_admin():
+        if args.elevate:
+            print("Requesting administrator privileges...")
+            _request_elevation()
+            return
+        else:
+            print("\nAdministrator privileges required.")
+            print("Run: corsair-psu-monitor install-driver --elevate")
+            sys.exit(1)
+
+    # Perform installation
+    print(f"\nInstalling WinUSB driver for {status.device_name}...")
+    result = install_winusb_driver(pid=status.pid, force=args.force)
+    print(f"Result: {result.message}")
+
+    if result.result == InstallResult.SUCCESS:
+        print("\nYou may need to unplug and replug the PSU USB cable.")
+        print("Test with: corsair-psu-monitor")
+    else:
+        if result.stdout:
+            print(f"Output: {result.stdout}")
+        if result.stderr:
+            print(f"Error: {result.stderr}")
+        sys.exit(1)
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -160,6 +219,20 @@ def main() -> None:
         "-i", "--interval", type=float, default=2.0,
         help="Update interval in seconds for --loop (default: 2)")
 
+    # Install-driver subcommand (Windows only)
+    install_parser = sub.add_parser(
+        "install-driver",
+        help="Install WinUSB driver for PSU (Windows, requires admin)")
+    install_parser.add_argument(
+        "--elevate", action="store_true",
+        help="Request admin elevation via UAC prompt")
+    install_parser.add_argument(
+        "--force", action="store_true",
+        help="Reinstall even if WinUSB is already present")
+    install_parser.add_argument(
+        "--check-only", action="store_true",
+        help="Only check driver status, don't install")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -171,6 +244,8 @@ def main() -> None:
         cmd_watch(args)
     elif args.command == "json":
         cmd_json(args)
+    elif args.command == "install-driver":
+        cmd_install_driver(args)
     else:
         cmd_read(args)
 

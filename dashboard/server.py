@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import time
 import threading
 from contextlib import asynccontextmanager
@@ -20,53 +21,97 @@ detector = TransientDetector()
 latest_reading: dict = {}
 psu_connected = False
 USE_MOCK = False
-
+force_reconnect = False  # set True by /api/reconnect to trigger retry
 
 _ema_efficiency = None  # exponential moving average for efficiency smoothing
 EMA_ALPHA = 0.25       # lower = smoother (0.25 ≈ ~2s effective window at 0.5s poll)
 
+# Reconnect settings
+_RECONNECT_INITIAL = 5   # seconds
+_RECONNECT_MAX = 60      # seconds
+_RECONNECT_BACKOFF = 2   # multiplier
+_MAX_ERRORS = 10          # consecutive read errors before disconnect
+
 
 def collect_loop():
     """Background thread: read PSU every ~0.5s, store, detect transients, broadcast."""
-    global latest_reading, psu_connected, USE_MOCK, _ema_efficiency
+    global latest_reading, psu_connected, USE_MOCK, _ema_efficiency, force_reconnect
 
-    # Try real PSU first
     psu = None
-    try:
-        from corsair_psu_monitor import CorsairPSU
-        psu = CorsairPSU()
-        psu.open()
-        psu_connected = True
-        print(f"[PSU] Connected to {psu.model}")
-    except Exception as e:
-        print(f"[PSU] Could not connect to real PSU: {e}")
-        print("[PSU] Running in DEMO mode with simulated data")
-        USE_MOCK = True
-        psu_connected = False
+    reconnect_delay = _RECONNECT_INITIAL
+    consecutive_errors = 0
 
     while True:
+        # ── Connection phase ─────────────────────────────────────
+        if psu is None or force_reconnect:
+            if psu is not None:
+                try:
+                    psu.close()
+                except Exception:
+                    pass
+                psu = None
+            force_reconnect = False
+
+            try:
+                from corsair_psu_monitor import CorsairPSU
+                psu = CorsairPSU()
+                psu.open()
+                psu_connected = True
+                USE_MOCK = False
+                reconnect_delay = _RECONNECT_INITIAL
+                consecutive_errors = 0
+                _ema_efficiency = None
+                print(f"[PSU] Connected to {psu.model}")
+                _broadcast(json.dumps({
+                    "type": "status",
+                    "psu_connected": True,
+                    "demo_mode": False,
+                    "model": psu.model,
+                }))
+            except Exception as e:
+                if psu:
+                    try:
+                        psu.close()
+                    except Exception:
+                        pass
+                    psu = None
+                psu_connected = False
+                USE_MOCK = True
+                print(f"[PSU] Connection failed: {e} "
+                      f"(retry in {reconnect_delay}s)")
+                _broadcast(json.dumps({
+                    "type": "status",
+                    "psu_connected": False,
+                    "demo_mode": True,
+                    "retry_in": reconnect_delay,
+                }))
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(
+                    reconnect_delay * _RECONNECT_BACKOFF, _RECONNECT_MAX)
+                continue
+
+        # ── Reading phase ────────────────────────────────────────
         try:
             if USE_MOCK:
                 reading = _mock_reading()
             else:
                 reading = psu.read_all()
                 reading["timestamp"] = time.time()
-                # Smooth efficiency with EMA (register timing skew causes jitter)
+                # Smooth efficiency with EMA
                 raw_eff = reading.get("efficiency")
                 if raw_eff is not None:
                     raw_eff = min(100.0, max(0.0, raw_eff))
                     if _ema_efficiency is None:
                         _ema_efficiency = raw_eff
                     else:
-                        _ema_efficiency = EMA_ALPHA * raw_eff + (1 - EMA_ALPHA) * _ema_efficiency
+                        _ema_efficiency = (EMA_ALPHA * raw_eff
+                                           + (1 - EMA_ALPHA) * _ema_efficiency)
                     reading["efficiency"] = round(_ema_efficiency, 1)
+                consecutive_errors = 0
 
             latest_reading = reading
-
-            # Store in database
             db.insert_reading(reading)
 
-            # Detect transients
             events = detector.analyze(reading)
             for event in events:
                 db.insert_transient({
@@ -80,7 +125,6 @@ def collect_loop():
                     "description": event.description,
                 })
 
-            # Broadcast to WebSocket clients
             payload = json.dumps({
                 "type": "reading",
                 "data": _sanitize(reading),
@@ -100,12 +144,33 @@ def collect_loop():
             _broadcast(payload)
 
         except Exception as e:
-            print(f"[PSU] Read error: {e}")
-            error_payload = json.dumps({
-                "type": "error",
-                "message": str(e),
-            })
-            _broadcast(error_payload)
+            consecutive_errors += 1
+            print(f"[PSU] Read error ({consecutive_errors}/{_MAX_ERRORS}): {e}")
+
+            if not USE_MOCK and consecutive_errors >= _MAX_ERRORS:
+                print("[PSU] Too many errors, will retry connection.")
+                if psu:
+                    try:
+                        psu.close()
+                    except Exception:
+                        pass
+                    psu = None
+                psu_connected = False
+                USE_MOCK = True
+                _ema_efficiency = None
+                reconnect_delay = _RECONNECT_INITIAL
+                _broadcast(json.dumps({
+                    "type": "status",
+                    "psu_connected": False,
+                    "demo_mode": True,
+                    "message": f"Disconnected after {_MAX_ERRORS} errors. "
+                               f"Reconnecting...",
+                }))
+            else:
+                _broadcast(json.dumps({
+                    "type": "error",
+                    "message": str(e),
+                }))
 
         time.sleep(0.5)
 
@@ -249,12 +314,30 @@ async def api_thresholds():
 
 @app.get("/api/status")
 async def api_status():
-    return JSONResponse({
+    result = {
         "psu_connected": psu_connected,
         "demo_mode": USE_MOCK,
-        "uptime": time.time() - (latest_reading.get("timestamp", time.time()) if latest_reading else time.time()),
+        "uptime": time.time() - (latest_reading.get("timestamp", time.time())
+                                  if latest_reading else time.time()),
         "model": latest_reading.get("model", "Unknown"),
-    })
+    }
+    if sys.platform == "win32":
+        try:
+            from corsair_psu_monitor.driver_installer import check_driver_status
+            ds = check_driver_status()
+            result["driver_status"] = ds.status.value
+            result["driver_message"] = ds.message
+        except Exception:
+            pass
+    return JSONResponse(result)
+
+
+@app.post("/api/reconnect")
+async def api_reconnect():
+    """Force the collector loop to retry PSU connection."""
+    global force_reconnect
+    force_reconnect = True
+    return JSONResponse({"status": "reconnecting"})
 
 
 if __name__ == "__main__":

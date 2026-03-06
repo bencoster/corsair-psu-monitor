@@ -17,6 +17,14 @@ from .protocol import (
     balanced_decode,
     linear11_to_float,
 )
+from .driver_installer import (
+    check_driver_status,
+    install_winusb_driver,
+    DriverStatus,
+    DriverCheckResult,
+    InstallResult,
+    DriverInstallResult,
+)
 
 __all__ = [
     "CorsairPSU",
@@ -25,5 +33,11 @@ __all__ = [
     "balanced_encode",
     "balanced_decode",
     "linear11_to_float",
+    "check_driver_status",
+    "install_winusb_driver",
+    "DriverStatus",
+    "DriverCheckResult",
+    "InstallResult",
+    "DriverInstallResult",
     "__version__",
 ]

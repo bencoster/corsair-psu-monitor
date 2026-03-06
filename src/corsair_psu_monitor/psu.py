@@ -30,6 +30,7 @@ Usage:
 """
 
 import logging
+import sys
 import time
 from typing import Dict, Optional
 
@@ -139,7 +140,20 @@ class CorsairPSU:
         self._model = SUPPORTED_DEVICES.get(self._pid, f"PID_{self._pid:04X}")
 
         # Claim the USB interface
-        self._dev.set_configuration()
+        try:
+            self._dev.set_configuration()
+        except usb.core.USBError as e:
+            if sys.platform == "win32" and (
+                "Entity not found" in str(e) or getattr(e, "errno", 0) == 2
+            ):
+                raise RuntimeError(
+                    f"Cannot configure {self._model} USB device: {e}\n"
+                    "This usually means the WinUSB driver is not installed.\n"
+                    "Fix with: corsair-psu-monitor install-driver --elevate\n"
+                    "Or manually install WinUSB via Zadig "
+                    "(see drivers/windows/)"
+                ) from e
+            raise
         cfg = self._dev.get_active_configuration()
         intf = cfg[(0, 0)]
 
