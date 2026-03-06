@@ -4,10 +4,15 @@ Automates detection and installation of the WinUSB driver needed for
 pyusb/libusb to communicate with Corsair AXi/HXi PSU dongles.
 
 On Windows, the PSU dongle ships with a Silicon Labs SiUSBXpress driver
-that blocks direct USB access.  This module uses wdi-simple.exe (from
-the libwdi project, https://github.com/pbatard/libwdi) to replace it
-with WinUSB, handling self-signed certificate generation and .cat file
-creation automatically.
+that blocks direct USB access.  This module installs the WinUSB driver
+using the bundled .inf file via two methods:
+
+  1. **pnputil** — Adds the driver package to the Windows driver store
+     and binds it to the target device.
+  2. **newdev.dll SetupAPI** — Calls ``UpdateDriverForPlugAndPlayDevicesW``
+     via ctypes to force the driver onto the hardware ID.
+
+Both are built into Windows — no external downloads needed.
 
 Usage::
 
@@ -21,15 +26,12 @@ Usage::
         print(result.message)
 """
 
-import hashlib
 import logging
 import os
 import platform
-import shutil
 import subprocess
 import sys
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -37,14 +39,6 @@ from typing import Optional
 from .protocol import CORSAIR_VENDOR_ID, SUPPORTED_DEVICES
 
 logger = logging.getLogger(__name__)
-
-# wdi-simple.exe release info (libwdi v1.5.1)
-_WDI_DOWNLOAD_URL = (
-    "https://github.com/pbatard/libwdi/releases/download/"
-    "v1.5.1/wdi-simple.exe"
-)
-_WDI_SHA256 = ""  # Will be populated after first verified download
-_WDI_CACHE_DIR_NAME = ".corsair-psu"
 
 
 # ── Types ────────────────────────────────────────────────────────────
@@ -65,7 +59,7 @@ class InstallResult(Enum):
     ALREADY_INSTALLED = "already_installed"
     NEEDS_ADMIN = "needs_admin"
     DEVICE_NOT_FOUND = "device_not_found"
-    WDI_NOT_FOUND = "wdi_not_found"
+    INF_NOT_FOUND = "inf_not_found"
     INSTALL_FAILED = "install_failed"
     NOT_WINDOWS = "not_windows"
 
@@ -93,7 +87,7 @@ class DriverInstallResult:
     stderr: Optional[str] = None
 
 
-# ── Admin detection ──────────────────────────────────────────────────
+# ── Admin helpers ────────────────────────────────────────────────────
 
 
 def _is_admin() -> bool:
@@ -126,76 +120,25 @@ def _request_elevation() -> bool:
         return False
 
 
-# ── wdi-simple.exe locator ───────────────────────────────────────────
+# ── .inf file locator ────────────────────────────────────────────────
 
 
-def _find_wdi_simple() -> Optional[Path]:
-    """Locate wdi-simple.exe.
+def _find_inf() -> Optional[Path]:
+    """Locate the bundled corsair-psu-winusb.inf driver file.
 
     Search order:
-      1. Package drivers directory (development layout)
-      2. User cache directory (~/.corsair-psu/)
-      3. System PATH
+      1. Development layout: ../../drivers/windows/
+      2. Installed package: ./drivers/
     """
-    # 1. Relative to this package (development: ../../drivers/windows/)
     pkg_dir = Path(__file__).resolve().parent
     candidates = [
-        pkg_dir / "drivers" / "wdi-simple.exe",
-        pkg_dir.parent.parent / "drivers" / "windows" / "wdi-simple.exe",
+        pkg_dir.parent.parent / "drivers" / "windows" / "corsair-psu-winusb.inf",
+        pkg_dir / "drivers" / "corsair-psu-winusb.inf",
     ]
     for c in candidates:
         if c.is_file():
             return c
-
-    # 2. User cache
-    cache = Path.home() / _WDI_CACHE_DIR_NAME / "wdi-simple.exe"
-    if cache.is_file():
-        return cache
-
-    # 3. System PATH
-    found = shutil.which("wdi-simple")
-    if found:
-        return Path(found)
-
     return None
-
-
-def _get_wdi_cache_path() -> Path:
-    """Return the path where wdi-simple.exe should be cached."""
-    return Path.home() / _WDI_CACHE_DIR_NAME / "wdi-simple.exe"
-
-
-def _download_wdi_simple(url: str = _WDI_DOWNLOAD_URL) -> Optional[Path]:
-    """Download wdi-simple.exe from GitHub releases.
-
-    Downloads to ~/.corsair-psu/wdi-simple.exe and verifies SHA256
-    if a known hash is set.
-
-    Returns the path on success, None on failure.
-    """
-    import urllib.request
-
-    dest = _get_wdi_cache_path()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    logger.info("Downloading wdi-simple.exe from %s ...", url)
-    try:
-        urllib.request.urlretrieve(url, str(dest))
-    except Exception as e:
-        logger.error("Download failed: %s", e)
-        return None
-
-    # Verify SHA256 if we have a known hash
-    if _WDI_SHA256:
-        sha = hashlib.sha256(dest.read_bytes()).hexdigest()
-        if sha != _WDI_SHA256:
-            logger.error("SHA256 mismatch: got %s, expected %s", sha, _WDI_SHA256)
-            dest.unlink(missing_ok=True)
-            return None
-        logger.info("SHA256 verified: %s", sha[:16])
-
-    logger.info("Saved to %s", dest)
-    return dest
 
 
 # ── Device detection via PowerShell ──────────────────────────────────
@@ -435,22 +378,22 @@ def install_winusb_driver(
     vid: int = CORSAIR_VENDOR_ID,
     pid: Optional[int] = None,
     force: bool = False,
-    auto_download: bool = True,
 ) -> DriverInstallResult:
     """Install WinUSB driver for a Corsair PSU.
 
-    Uses wdi-simple.exe (from libwdi) to prepare and install the driver.
-    Falls back to pnputil with the bundled .inf file if wdi-simple is
-    not available.
+    Uses two Windows built-in mechanisms (no external downloads):
 
-    Requires administrator privileges.  If not elevated, returns
-    NEEDS_ADMIN with instructions.
+      1. ``pnputil /add-driver`` to add the .inf to the driver store.
+      2. ``UpdateDriverForPlugAndPlayDevicesW`` (newdev.dll) to bind the
+         driver to the specific hardware ID.
+      3. Device disable/enable cycle to force rebind if needed.
+
+    Requires administrator privileges.
 
     Args:
         vid: USB Vendor ID (default: Corsair 0x1B1C).
         pid: USB Product ID.  If None, auto-detects.
         force: Reinstall even if WinUSB is already present.
-        auto_download: Download wdi-simple.exe if not found.
 
     Returns:
         DriverInstallResult with outcome, message, and process output.
@@ -482,112 +425,149 @@ def install_winusb_driver(
             "Administrator privileges required.\n"
             "Run: corsair-psu-monitor install-driver --elevate")
 
-    # 3. Find or download wdi-simple.exe
-    wdi_path = _find_wdi_simple()
-    if wdi_path is None and auto_download:
-        wdi_path = _download_wdi_simple()
-    if wdi_path is None:
-        return _fallback_pnputil_install(vid, target_pid)
-
-    # 4. Run wdi-simple.exe
-    model = SUPPORTED_DEVICES.get(target_pid, f"PID_{target_pid:04X}")
-    device_name = f"Corsair {model} PSU"
-
-    with tempfile.TemporaryDirectory(prefix="corsair_psu_drv_") as tmpdir:
-        cmd = [
-            str(wdi_path),
-            "--vid", f"0x{vid:04X}",
-            "--pid", f"0x{target_pid:04X}",
-            "--type", "0",  # WDI_WINUSB = 0
-            "--name", device_name,
-            "--dest", tmpdir,
-            "--progressbar",
-            "--timeout", "120000",
-        ]
-
-        logger.info("Running: %s", " ".join(cmd))
-
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=180)
-        except subprocess.TimeoutExpired:
-            return DriverInstallResult(
-                InstallResult.INSTALL_FAILED,
-                "Driver installation timed out after 180 seconds.")
-        except Exception as e:
-            return DriverInstallResult(
-                InstallResult.INSTALL_FAILED,
-                f"Failed to run wdi-simple.exe: {e}")
-
-        if proc.returncode == 0:
-            # 5. Verify
-            verify = check_driver_status(vid, target_pid)
-            if verify.status == DriverStatus.OK:
-                return DriverInstallResult(
-                    InstallResult.SUCCESS,
-                    f"WinUSB driver installed successfully for {model}.",
-                    proc.returncode, proc.stdout, proc.stderr)
-            return DriverInstallResult(
-                InstallResult.SUCCESS,
-                f"wdi-simple reported success. {verify.message} "
-                f"You may need to unplug and replug the USB cable.",
-                proc.returncode, proc.stdout, proc.stderr)
-        else:
-            return DriverInstallResult(
-                InstallResult.INSTALL_FAILED,
-                f"wdi-simple failed (exit {proc.returncode}): "
-                f"{(proc.stderr or proc.stdout or '').strip()}",
-                proc.returncode, proc.stdout, proc.stderr)
-
-
-def _fallback_pnputil_install(vid: int, pid: int) -> DriverInstallResult:
-    """Fallback: install using the bundled .inf file via pnputil.
-
-    This requires the .inf to be properly signed or the system to
-    accept unsigned drivers.  Less reliable than wdi-simple but
-    doesn't need an external binary.
-    """
-    # Find the .inf file
-    pkg_dir = Path(__file__).resolve().parent
-    inf_candidates = [
-        pkg_dir.parent.parent / "drivers" / "windows" / "corsair-psu-winusb.inf",
-        pkg_dir / "drivers" / "corsair-psu-winusb.inf",
-    ]
-    inf_path = None
-    for c in inf_candidates:
-        if c.is_file():
-            inf_path = c
-            break
-
+    # 3. Find .inf
+    inf_path = _find_inf()
     if inf_path is None:
         return DriverInstallResult(
-            InstallResult.WDI_NOT_FOUND,
-            "Neither wdi-simple.exe nor the .inf driver file was found.\n"
-            "Download wdi-simple.exe to ~/.corsair-psu/ or install via Zadig:\n"
-            "  https://zadig.akeo.ie/")
+            InstallResult.INF_NOT_FOUND,
+            "Driver .inf file not found. Reinstall corsair-psu-monitor or\n"
+            "install WinUSB manually with Zadig: https://zadig.akeo.ie/")
 
-    model = SUPPORTED_DEVICES.get(pid, f"PID_{pid:04X}")
-    logger.info("Fallback: installing via pnputil with %s", inf_path)
+    model = SUPPORTED_DEVICES.get(target_pid, f"PID_{target_pid:04X}")
+    hardware_id = f"USB\\VID_{vid:04X}&PID_{target_pid:04X}"
+    messages = []
 
+    # 4. Add driver to Windows store via pnputil
+    pnp_result = _pnputil_add_driver(inf_path)
+    messages.append(f"pnputil: {pnp_result}")
+
+    # 5. Force-bind via UpdateDriverForPlugAndPlayDevicesW
+    api_result = _setupapi_update_driver(hardware_id, inf_path)
+    messages.append(f"SetupAPI: {api_result}")
+
+    # 6. Device disable/enable to rebind
+    dev_info = _query_device_info(vid, target_pid)
+    if dev_info and dev_info.get("instance_id"):
+        rebind_result = _device_rebind(dev_info["instance_id"])
+        messages.append(f"Rebind: {rebind_result}")
+
+    # 7. Verify
+    verify = check_driver_status(vid, target_pid)
+    detail = " | ".join(messages)
+
+    if verify.status == DriverStatus.OK:
+        return DriverInstallResult(
+            InstallResult.SUCCESS,
+            f"WinUSB driver installed successfully for {model}.",
+            stdout=detail)
+
+    if verify.current_driver and verify.current_driver.lower() == "winusb":
+        return DriverInstallResult(
+            InstallResult.SUCCESS,
+            f"WinUSB driver bound to {model}. {verify.message}",
+            stdout=detail)
+
+    return DriverInstallResult(
+        InstallResult.INSTALL_FAILED,
+        f"Driver installation attempted but verification shows: "
+        f"{verify.message}\n{detail}\n"
+        f"Try Zadig as a fallback: https://zadig.akeo.ie/",
+        stdout=detail)
+
+
+# ── Installation methods ─────────────────────────────────────────────
+
+
+def _pnputil_add_driver(inf_path: Path) -> str:
+    """Add driver .inf to Windows driver store via pnputil."""
     cmd = ["pnputil", "/add-driver", str(inf_path), "/install"]
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=60)
+        output = (proc.stdout or "").strip()
+        if proc.returncode == 0:
+            return f"OK ({output[:80]})"
+        return f"exit {proc.returncode}: {output[:120]}"
     except Exception as e:
-        return DriverInstallResult(
-            InstallResult.INSTALL_FAILED,
-            f"pnputil failed: {e}")
+        return f"error: {e}"
 
-    if proc.returncode == 0:
-        return DriverInstallResult(
-            InstallResult.SUCCESS,
-            f"Driver package added via pnputil for {model}. "
-            f"You may need to unplug and replug the USB cable.",
-            proc.returncode, proc.stdout, proc.stderr)
-    else:
-        return DriverInstallResult(
-            InstallResult.INSTALL_FAILED,
-            f"pnputil failed (exit {proc.returncode}): "
-            f"{(proc.stderr or proc.stdout or '').strip()}\n"
-            f"Try installing manually with Zadig: https://zadig.akeo.ie/",
-            proc.returncode, proc.stdout, proc.stderr)
+
+def _setupapi_update_driver(hardware_id: str, inf_path: Path) -> str:
+    """Use Windows SetupAPI to force-bind a driver to a hardware ID.
+
+    Calls ``UpdateDriverForPlugAndPlayDevicesW`` from ``newdev.dll``
+    which is the same API that Zadig/libwdi ultimately uses.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        newdev = ctypes.WinDLL("newdev.dll", use_last_error=True)
+
+        # BOOL UpdateDriverForPlugAndPlayDevicesW(
+        #   HWND hwndParent,         // NULL
+        #   LPCWSTR HardwareId,
+        #   LPCWSTR FullInfPath,
+        #   DWORD InstallFlags,      // INSTALLFLAG_FORCE = 1
+        #   PBOOL bRebootRequired
+        # )
+        UpdateDriver = newdev.UpdateDriverForPlugAndPlayDevicesW
+        UpdateDriver.argtypes = [
+            wintypes.HWND,     # hwndParent
+            wintypes.LPCWSTR,  # HardwareId
+            wintypes.LPCWSTR,  # FullInfPath
+            wintypes.DWORD,    # InstallFlags
+            ctypes.POINTER(wintypes.BOOL),  # bRebootRequired
+        ]
+        UpdateDriver.restype = wintypes.BOOL
+
+        INSTALLFLAG_FORCE = 0x00000001
+        reboot_required = wintypes.BOOL(False)
+
+        full_inf = str(inf_path.resolve())
+        logger.info("UpdateDriverForPlugAndPlayDevices(%s, %s)",
+                     hardware_id, full_inf)
+
+        success = UpdateDriver(
+            None,                # no parent window
+            hardware_id,
+            full_inf,
+            INSTALLFLAG_FORCE,
+            ctypes.byref(reboot_required),
+        )
+
+        if success:
+            reboot_msg = " (reboot required)" if reboot_required.value else ""
+            return f"OK{reboot_msg}"
+        else:
+            err = ctypes.get_last_error()
+            # Common errors:
+            # ERROR_NO_SUCH_DEVINST = 0xE000020B (device not present)
+            # ERROR_NO_MORE_ITEMS = 259
+            return f"failed (Win32 error {err:#010x})"
+
+    except OSError as e:
+        return f"newdev.dll not available: {e}"
+    except Exception as e:
+        return f"error: {e}"
+
+
+def _device_rebind(instance_id: str) -> str:
+    """Disable and re-enable a USB device to force driver rebind."""
+    cmd = [
+        "powershell.exe", "-NoProfile", "-Command",
+        f'Disable-PnpDevice -InstanceId "{instance_id}" '
+        f'-Confirm:$false -ErrorAction Stop; '
+        f'Start-Sleep 2; '
+        f'Enable-PnpDevice -InstanceId "{instance_id}" '
+        f'-Confirm:$false -ErrorAction Stop',
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30)
+        if proc.returncode == 0:
+            return "OK (device recycled)"
+        err = (proc.stderr or proc.stdout or "").strip()[:120]
+        return f"exit {proc.returncode}: {err}"
+    except Exception as e:
+        return f"error: {e}"
